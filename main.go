@@ -4,6 +4,9 @@ import (
 	"flag"
 
 	"fmt"
+	"bytes"
+	"encoding/binary"
+
 	"log"
 	"math/rand"
 	"net"
@@ -28,7 +31,7 @@ var (
 type Agent struct {
 	ID            int
 	FlushInterval time.Duration
-	Addr          string
+        Addr          string
 	MetricNames   []string
 	Connection    net.Conn
 }
@@ -52,6 +55,18 @@ func (a *Agent) flush() error {
 		if err != nil {
 			return err
 		}
+                buf := new(bytes.Buffer)
+                blen := len(prefix)
+                size := 1 +    // prefix
+                        1 +    // max delta
+                        1 +    // Bucket size
+                        blen   // bucket string
+                binary.Write(buf, binary.BigEndian, uint32(size))
+                binary.Write(buf, binary.BigEndian, uint8(4))
+                binary.Write(buf, binary.BigEndian, uint8(2))
+                binary.Write(buf, binary.BigEndian, uint8(blen))
+                conn.Write(buf.Bytes())
+                conn.Write([]byte(prefix))
 		a.Connection = conn
 	}
 
@@ -64,6 +79,7 @@ func (a *Agent) flush() error {
 		}()
 	}
 
+        conn := a.Connection
 	epoch := time.Now().Unix()
 	for _, name := range a.MetricNames {
 		err := carbonate(a.Connection, name, rand.Intn(1000), epoch)
@@ -72,20 +88,23 @@ func (a *Agent) flush() error {
 			return err
 		}
 	}
+        buf := new(bytes.Buffer)
+        binary.Write(buf, binary.BigEndian, uint8(6))
+        conn.Write(buf.Bytes())
 
 	log.Printf("agent %d: flushed %d metrics\n", a.ID, len(a.MetricNames))
 	return nil
 }
 
-func launchAgent(id, n int, flush time.Duration, addr, prefix string) {
+func launchAgent(id, n int, flush time.Duration, addr, prefix string) error {
 	metricNames := genMetricNames(prefix, id, n)
-
 	a := &Agent{
 		ID:            id,
 		FlushInterval: time.Duration(flush),
 		Addr:          addr,
 		MetricNames:   metricNames}
 	a.Start()
+	return nil
 }
 
 func init() {
